@@ -9,15 +9,15 @@
 //   reconcile -> the current month  (run once overnight)
 //   backfill  -> the last 12 months (run once by hand to load history)
 // ============================================================
- 
+
 import { createClient } from '@supabase/supabase-js';
- 
+
 const WINDSOR_API_KEY = process.env.WINDSOR_API_KEY;
 const SUPABASE_URL    = process.env.SUPABASE_URL;
 const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_KEY;
- 
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
- 
+
 // ============================================================
 // CONFIG: the field names Windsor returns for each column.
 // If Windsor rejects any name, the code now drops just that
@@ -49,10 +49,10 @@ const CONFIG = {
     }
   }
 };
- 
+
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : 0; };
 const iso = (d) => d.toISOString().slice(0, 10);
- 
+
 function monthChunks(from, to) {
   const chunks = [];
   let cur = new Date(from.getFullYear(), from.getMonth(), 1);
@@ -64,16 +64,16 @@ function monthChunks(from, to) {
   }
   return chunks;
 }
- 
+
 async function fetchWindsor(platform, window) {
   const cfg = CONFIG[platform];
   const fieldMap = { ...cfg.fields };            // role -> windsor name (we may prune this)
   let engField = cfg.engagementField;
- 
+
   for (let attempt = 0; attempt < 5; attempt++) {
     const names = [...new Set(Object.values(fieldMap))];
     if (engField && !names.includes(engField)) names.push(engField);
- 
+
     const params = new URLSearchParams({ api_key: WINDSOR_API_KEY, fields: names.join(',') });
     if (cfg.accountId) params.set('filter', JSON.stringify([[cfg.accountField, 'eq', cfg.accountId]]));
     if (window.recent) {
@@ -83,9 +83,9 @@ async function fetchWindsor(platform, window) {
       params.set('date_from', iso(window.from));
       params.set('date_to', iso(window.to));
     }
- 
+
     const res = await fetch(`https://connectors.windsor.ai/${cfg.connector}?${params.toString()}`);
- 
+
     if (res.ok) {
       const json = await res.json();
       const rows = json.data || json || [];
@@ -105,7 +105,7 @@ async function fetchWindsor(platform, window) {
         };
       }).filter((p) => p.id && p.id !== 'undefined');
     }
- 
+
     // Not ok: if Windsor names unsupported fields, drop just those and retry.
     const body = await res.text();
     const m = body.match(/Unexpected field\(s\):\s*\{([^}]*)\}/i);
@@ -119,7 +119,7 @@ async function fetchWindsor(platform, window) {
   }
   throw new Error(`${platform}: could not agree a supported field set with Windsor`);
 }
- 
+
 async function buildResolver() {
   const [{ data: cr }, { data: rl }] = await Promise.all([
     supabase.from('country_region').select('country,region'),
@@ -141,11 +141,11 @@ async function buildResolver() {
     return { resort: null, country: null, region: null };
   };
 }
- 
+
 async function runSync(mode = 'recent') {
   const resolve = await buildResolver();
   const now = new Date();
- 
+
   let windows;
   if (mode === 'recent') {
     windows = [{ recent: true }];
@@ -156,7 +156,7 @@ async function runSync(mode = 'recent') {
   } else {
     throw new Error(`Unknown mode: ${mode}`);
   }
- 
+
   const all = [];
   const problems = [];
   for (const platform of ['Instagram', 'Facebook']) {
@@ -168,9 +168,28 @@ async function runSync(mode = 'recent') {
       console.error(`${platform} pull failed:`, err.message);
     }
   }
- 
+
   for (const p of all) Object.assign(p, resolve(p.caption), { last_synced: now.toISOString() });
- 
+
+  // Cross-post inheritance: Facebook copies arrive without a caption, so let each
+  // borrow its Instagram twin's destination when that day points to a single place.
+  const igByDay = {};
+  for (const p of all) {
+    if (p.platform === 'Instagram' && p.resort) {
+      const day = p.posted_at.slice(0, 10);
+      (igByDay[day] = igByDay[day] || new Set()).add(JSON.stringify([p.resort, p.country, p.region]));
+    }
+  }
+  for (const p of all) {
+    if (p.platform === 'Facebook' && !p.resort) {
+      const set = igByDay[p.posted_at.slice(0, 10)];
+      if (set && set.size === 1) {
+        const [resort, country, region] = JSON.parse([...set][0]);
+        Object.assign(p, { resort, country, region });
+      }
+    }
+  }
+
   let upserted = 0;
   for (let i = 0; i < all.length; i += 500) {
     const batch = all.slice(i, i + 500);
@@ -178,7 +197,7 @@ async function runSync(mode = 'recent') {
     if (error) throw error;
     upserted += batch.length;
   }
- 
+
   // Quick per-platform counts so we can see how each did.
   const byPlatform = {};
   for (const p of all) {
@@ -186,14 +205,14 @@ async function runSync(mode = 'recent') {
     byPlatform[p.platform].posts++;
     if (p.resort) byPlatform[p.platform].tagged++;
   }
- 
+
   const unresolved = all.filter((p) => !p.resort).length;
   const notes = [`${unresolved} posts unmatched`, ...problems].join(' | ');
   await supabase.from('sync_log').insert({ mode, rows_upserted: upserted, notes });
- 
+
   return { mode, upserted, unresolved, byPlatform, problems };
 }
- 
+
 export default async function handler(req, res) {
   if (!req.query.token || req.query.token !== process.env.SYNC_SECRET) {
     return res.status(401).json({ error: 'Unauthorised' });
