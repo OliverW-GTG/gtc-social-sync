@@ -2,44 +2,45 @@
 // GTC Social Performance sync  (single file)
 // Windsor.ai  ->  tag each post  ->  Supabase
 //
-// This is called by your scheduler at:
+// Called by your scheduler at:
 //   /api/sync?mode=recent&token=YOUR_SECRET
 // Modes:
 //   recent    -> last few days      (run every 3 hours)
 //   reconcile -> the current month  (run once overnight)
 //   backfill  -> the last 12 months (run once by hand to load history)
 // ============================================================
-
+ 
 import { createClient } from '@supabase/supabase-js';
-
+ 
 const WINDSOR_API_KEY = process.env.WINDSOR_API_KEY;
 const SUPABASE_URL    = process.env.SUPABASE_URL;
 const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_KEY;
-
+ 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
-
+ 
 // ============================================================
 // CONFIG: the field names Windsor returns for each column.
-// Instagram is set from Windsor's own reference. Facebook uses
-// Windsor's current standard names. If a Facebook name is off,
-// the first run will report it and only Facebook is affected.
+// If Windsor rejects any name, the code now drops just that
+// field and retries, so a wrong guess no longer breaks a pull.
 // ============================================================
 const CONFIG = {
   Instagram: {
-    connector:    'instagram',
-    accountId:    '17841404427634298',   // GTC Instagram
-    accountField: 'account_id',
+    connector:       'instagram',
+    accountId:       '17841404427634298',   // GTC Instagram
+    accountField:    'account_id',
+    engagementField: 'media_engagement',    // Instagram's own combined engagement figure
     fields: {
-      id: 'media_id', date: 'date', permalink: 'permalink', caption: 'media_caption',
+      id: 'media_id', date: 'date', permalink: 'media_url', caption: 'media_caption',
       reach: 'media_reach', impressions: 'media_impressions',
       likes: 'media_like_count', comments: 'media_comments_count',
       saves: 'media_saved', shares: 'media_shares'
     }
   },
   Facebook: {
-    connector:    'facebook_organic',
-    accountId:    '984913224898857',     // GTC Facebook page
-    accountField: 'page_id',
+    connector:       'facebook_organic',
+    accountId:       '984913224898857',     // GTC Facebook page
+    accountField:    'page_id',
+    engagementField: null,                  // reels return 0, so we sum the parts instead
     fields: {
       id: 'post_id', date: 'date', permalink: 'permalink_url', caption: 'message',
       reach: 'post_impressions_unique', impressions: 'post_impressions',
@@ -48,10 +49,10 @@ const CONFIG = {
     }
   }
 };
-
+ 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : 0; };
 const iso = (d) => d.toISOString().slice(0, 10);
-
+ 
 function monthChunks(from, to) {
   const chunks = [];
   let cur = new Date(from.getFullYear(), from.getMonth(), 1);
@@ -63,45 +64,62 @@ function monthChunks(from, to) {
   }
   return chunks;
 }
-
-async function fetchWindsor(platform, { from, to, recent }) {
+ 
+async function fetchWindsor(platform, window) {
   const cfg = CONFIG[platform];
-  const wanted = Object.values(cfg.fields).join(',');
-  const params = new URLSearchParams({ api_key: WINDSOR_API_KEY, fields: wanted });
-
-  if (cfg.accountId) {
-    params.set('filter', JSON.stringify([[cfg.accountField, 'eq', cfg.accountId]]));
+  const fieldMap = { ...cfg.fields };            // role -> windsor name (we may prune this)
+  let engField = cfg.engagementField;
+ 
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const names = [...new Set(Object.values(fieldMap))];
+    if (engField && !names.includes(engField)) names.push(engField);
+ 
+    const params = new URLSearchParams({ api_key: WINDSOR_API_KEY, fields: names.join(',') });
+    if (cfg.accountId) params.set('filter', JSON.stringify([[cfg.accountField, 'eq', cfg.accountId]]));
+    if (window.recent) {
+      params.set('refresh_since', '3d');
+      params.set('refresh_interval', '3h');
+    } else {
+      params.set('date_from', iso(window.from));
+      params.set('date_to', iso(window.to));
+    }
+ 
+    const res = await fetch(`https://connectors.windsor.ai/${cfg.connector}?${params.toString()}`);
+ 
+    if (res.ok) {
+      const json = await res.json();
+      const rows = json.data || json || [];
+      const f = fieldMap;
+      return rows.map((r) => {
+        const likes = num(r[f.likes]), comments = num(r[f.comments]);
+        const saves = num(r[f.saves]), shares = num(r[f.shares]);
+        const engFromField = engField ? num(r[engField]) : 0;
+        return {
+          id: String(r[f.id]), platform,
+          posted_at: new Date(r[f.date]).toISOString(),
+          permalink: r[f.permalink] || null,
+          caption: r[f.caption] || '',
+          reach: num(r[f.reach]), impressions: num(r[f.impressions]),
+          likes, comments, saves, shares,
+          engagement: engFromField > 0 ? engFromField : (likes + comments + saves + shares)
+        };
+      }).filter((p) => p.id && p.id !== 'undefined');
+    }
+ 
+    // Not ok: if Windsor names unsupported fields, drop just those and retry.
+    const body = await res.text();
+    const m = body.match(/Unexpected field\(s\):\s*\{([^}]*)\}/i);
+    if (res.status === 400 && m) {
+      const bad = m[1].split(',').map((s) => s.trim().replace(/['"]/g, ''));
+      for (const [role, name] of Object.entries(fieldMap)) if (bad.includes(name)) delete fieldMap[role];
+      if (engField && bad.includes(engField)) engField = null;
+      continue;
+    }
+    throw new Error(`${platform} Windsor error ${res.status}: ${body}`);
   }
-  if (recent) {
-    params.set('refresh_since', '3d');
-    params.set('refresh_interval', '3h');
-  } else {
-    params.set('date_from', iso(from));
-    params.set('date_to', iso(to));
-  }
-
-  const url = `https://connectors.windsor.ai/${cfg.connector}?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${platform} Windsor error ${res.status}: ${await res.text()}`);
-  const json = await res.json();
-  const rows = json.data || json || [];
-
-  return rows.map((r) => {
-    const f = cfg.fields;
-    const likes = num(r[f.likes]), comments = num(r[f.comments]);
-    const saves = num(r[f.saves]), shares = num(r[f.shares]);
-    return {
-      id: String(r[f.id]), platform,
-      posted_at: new Date(r[f.date]).toISOString(),
-      permalink: r[f.permalink] || null,
-      caption: r[f.caption] || '',
-      reach: num(r[f.reach]), impressions: num(r[f.impressions]),
-      likes, comments, saves, shares,
-      engagement: likes + comments + saves + shares
-    };
-  }).filter((p) => p.id && p.id !== 'undefined');
+  throw new Error(`${platform}: could not agree a supported field set with Windsor`);
 }
-
+ 
 async function buildResolver() {
   const [{ data: cr }, { data: rl }] = await Promise.all([
     supabase.from('country_region').select('country,region'),
@@ -123,11 +141,11 @@ async function buildResolver() {
     return { resort: null, country: null, region: null };
   };
 }
-
+ 
 async function runSync(mode = 'recent') {
   const resolve = await buildResolver();
   const now = new Date();
-
+ 
   let windows;
   if (mode === 'recent') {
     windows = [{ recent: true }];
@@ -138,7 +156,7 @@ async function runSync(mode = 'recent') {
   } else {
     throw new Error(`Unknown mode: ${mode}`);
   }
-
+ 
   const all = [];
   const problems = [];
   for (const platform of ['Instagram', 'Facebook']) {
@@ -150,9 +168,9 @@ async function runSync(mode = 'recent') {
       console.error(`${platform} pull failed:`, err.message);
     }
   }
-
+ 
   for (const p of all) Object.assign(p, resolve(p.caption), { last_synced: now.toISOString() });
-
+ 
   let upserted = 0;
   for (let i = 0; i < all.length; i += 500) {
     const batch = all.slice(i, i + 500);
@@ -160,15 +178,22 @@ async function runSync(mode = 'recent') {
     if (error) throw error;
     upserted += batch.length;
   }
-
+ 
+  // Quick per-platform counts so we can see how each did.
+  const byPlatform = {};
+  for (const p of all) {
+    byPlatform[p.platform] = byPlatform[p.platform] || { posts: 0, tagged: 0 };
+    byPlatform[p.platform].posts++;
+    if (p.resort) byPlatform[p.platform].tagged++;
+  }
+ 
   const unresolved = all.filter((p) => !p.resort).length;
   const notes = [`${unresolved} posts unmatched`, ...problems].join(' | ');
   await supabase.from('sync_log').insert({ mode, rows_upserted: upserted, notes });
-
-  return { mode, upserted, unresolved, problems };
+ 
+  return { mode, upserted, unresolved, byPlatform, problems };
 }
-
-// ---- Web handler: this is what the scheduler calls ----
+ 
 export default async function handler(req, res) {
   if (!req.query.token || req.query.token !== process.env.SYNC_SECRET) {
     return res.status(401).json({ error: 'Unauthorised' });
@@ -181,4 +206,3 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, error: String(err.message || err) });
   }
 }
-
