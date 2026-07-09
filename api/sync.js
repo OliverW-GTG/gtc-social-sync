@@ -10,7 +10,8 @@ const CONFIG = {
     connector: 'instagram', accountId: '17841404427634298', accountField: 'account_id',
     engagementField: 'media_engagement',
     timeFields: ['media_timestamp','timestamp','created_time','media_created_time','media_publish_time'],
-    fields: { id:'media_id', date:'date', permalink:'media_url', caption:'media_caption',
+    captionFields: ['media_caption'],
+    fields: { id:'media_id', date:'date', permalink:'media_url',
       reach:'media_reach', impressions:'media_impressions', likes:'media_like_count',
       comments:'media_comments_count', saves:'media_saved', shares:'media_shares' }
   },
@@ -18,7 +19,8 @@ const CONFIG = {
     connector: 'facebook_organic', accountId: '984913224898857', accountField: 'page_id',
     engagementField: null,
     timeFields: ['post_created_time','created_time'],
-    fields: { id:'post_id', date:'date', permalink:'permalink_url', caption:'message',
+    captionFields: ['message','story','description','post_message','post_story','caption','name'],
+    fields: { id:'post_id', date:'date', permalink:'permalink_url',
       reach:'post_impressions_unique', impressions:'post_impressions', likes:'post_reactions_like_total',
       comments:'post_comments', saves:'post_saves', shares:'post_shares' }
   }
@@ -32,9 +34,9 @@ function monthChunks(from,to){const c=[];let cur=new Date(from.getFullYear(),fro
 
 async function fetchWindsor(platform, window){
   const cfg=CONFIG[platform]; const fieldMap={...cfg.fields}; let engField=cfg.engagementField;
-  let timeFields=[...(cfg.timeFields||[])];
+  let timeFields=[...(cfg.timeFields||[])]; let capFields=[...(cfg.captionFields||[])];
   for(let attempt=0;attempt<6;attempt++){
-    const names=[...new Set([...Object.values(fieldMap),...timeFields])]; if(engField&&!names.includes(engField))names.push(engField);
+    const names=[...new Set([...Object.values(fieldMap),...timeFields,...capFields])]; if(engField&&!names.includes(engField))names.push(engField);
     const params=new URLSearchParams({api_key:process.env.WINDSOR_API_KEY,fields:names.join(',')});
     if(cfg.accountId)params.set('filter',JSON.stringify([[cfg.accountField,'eq',cfg.accountId]]));
     if(window.recent){params.set('refresh_since','3d');params.set('refresh_interval','3h');}
@@ -45,15 +47,16 @@ async function fetchWindsor(platform, window){
       return rows.map((r)=>{const likes=num(r[f.likes]),comments=num(r[f.comments]),saves=num(r[f.saves]),shares=num(r[f.shares]);
         const eng=engField?num(r[engField]):0;
         const t=timeFields.map(n=>r[n]).find(v=>v!==undefined&&v!==null&&v!=='');
+        const cap=capFields.map(n=>r[n]).find(v=>v&&String(v).trim()!=='');
         return {id:String(r[f.id]),platform,posted_at:new Date(t||r[f.date]).toISOString(),
-          permalink:r[f.permalink]||null,caption:r[f.caption]||'',reach:num(r[f.reach]),impressions:num(r[f.impressions]),
+          permalink:r[f.permalink]||null,caption:cap||'',reach:num(r[f.reach]),impressions:num(r[f.impressions]),
           likes,comments,saves,shares,engagement:eng>0?eng:(likes+comments+saves+shares)};
       }).filter((p)=>p.id&&p.id!=='undefined');
     }
     const body=await res.text(); const m=body.match(/Unexpected field\(s\):\s*\{([^}]*)\}/i);
     if(res.status===400&&m){const bad=m[1].split(',').map(s=>s.trim().replace(/['"]/g,''));
       for(const[role,name]of Object.entries(fieldMap))if(bad.includes(name))delete fieldMap[role];
-      timeFields=timeFields.filter(n=>!bad.includes(n));
+      timeFields=timeFields.filter(n=>!bad.includes(n)); capFields=capFields.filter(n=>!bad.includes(n));
       if(engField&&bad.includes(engField))engField=null; continue;}
     throw new Error(`${platform} Windsor error ${res.status}: ${body}`);
   }
