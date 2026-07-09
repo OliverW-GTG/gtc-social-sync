@@ -53,8 +53,8 @@
 
   <div class="pwbar" style="flex-direction:column;align-items:stretch;gap:8px;">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-      <button class="save" id="scan">Scan captions with AI</button>
-      <span class="sub" style="margin:0;">Reads every untagged Instagram caption, tags the clear ones automatically, and leaves only the unsure ones below.</span>
+      <button class="save" id="scan">Scan and update everything</button>
+      <span class="sub" style="margin:0;">Reads new captions with AI, then rebuilds timestamps and matches Facebook to Instagram, month by month.</span>
     </div>
     <div id="scan-progress" class="sub" style="margin:0;display:none;"></div>
   </div>
@@ -179,7 +179,7 @@ $('#reload').addEventListener('click',load);
 async function scan(){
   if(!pw()){ alert('Enter your sync password at the top first'); return; }
   const btn=$('#scan'), prog=$('#scan-progress');
-  btn.disabled=true; btn.textContent='Scanning...'; prog.style.display='block';
+  btn.disabled=true; btn.textContent='Working...'; prog.style.display='block';
   let totalTagged=0, safety=0;
   try{
     while(safety++ < 60){
@@ -187,18 +187,27 @@ async function scan(){
       const d=await res.json();
       if(!res.ok) throw new Error(d.error||res.status);
       totalTagged+=d.tagged||0;
-      prog.textContent='Tagged '+totalTagged+' so far, '+d.remaining+' captions still to read...';
+      prog.textContent='Reading captions: tagged '+totalTagged+' so far, '+d.remaining+' to go...';
       if(d.done || d.processed===0) break;
     }
-    prog.textContent='Reading done, tagged '+totalTagged+'. Updating Facebook and the dashboard...';
-    await fetch('/api/sync?mode=backfill&token='+encodeURIComponent(pw()));
-    prog.textContent='All done. Tagged '+totalTagged+' posts. Refreshing the list of any left to check...';
+    const now=new Date(), months=[];
+    for(let i=13;i>=0;i--){
+      const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
+      months.push({from:d.toISOString().slice(0,10),
+        to:new Date(d.getFullYear(),d.getMonth()+1,0).toISOString().slice(0,10),
+        label:d.toLocaleDateString('en-GB',{month:'short',year:'numeric'})});
+    }
+    for(const m of months){
+      prog.textContent='Updating '+m.label+' (matching Facebook to Instagram by time)...';
+      await fetch('/api/sync?from='+m.from+'&to='+m.to+'&token='+encodeURIComponent(pw()));
+    }
+    prog.textContent='Refreshing what is left to check...';
     await load();
-    prog.textContent='Finished. '+totalTagged+' posts tagged automatically. Anything the AI was unsure about is listed below.';
+    prog.textContent='Finished. '+totalTagged+' new posts tagged by AI, and Facebook now matched to Instagram across your history. Anything still unsure is listed below.';
   }catch(err){
     prog.textContent='Stopped: '+err.message;
   }
-  btn.disabled=false; btn.textContent='Scan captions with AI';
+  btn.disabled=false; btn.textContent='Scan and update everything';
 }
 $('#scan').addEventListener('click',scan);
 
