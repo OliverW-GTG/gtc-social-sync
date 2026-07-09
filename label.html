@@ -51,6 +51,14 @@
     <span class="sub" style="margin:0;">Needed to save changes</span>
   </div>
 
+  <div class="pwbar" style="flex-direction:column;align-items:stretch;gap:8px;">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button class="save" id="scan">Scan captions with AI</button>
+      <span class="sub" style="margin:0;">Reads every untagged Instagram caption, tags the clear ones automatically, and leaves only the unsure ones below.</span>
+    </div>
+    <div id="scan-progress" class="sub" style="margin:0;display:none;"></div>
+  </div>
+
   <div id="list"></div>
   <div id="loading" class="state">Loading untagged posts...</div>
   <div id="more" style="text-align:center;display:none;"><button class="skip" id="reload">Refresh list</button></div>
@@ -167,6 +175,33 @@ async function send(card, payload, okMsg){
 }
 
 $('#reload').addEventListener('click',load);
+
+async function scan(){
+  if(!pw()){ alert('Enter your sync password at the top first'); return; }
+  const btn=$('#scan'), prog=$('#scan-progress');
+  btn.disabled=true; btn.textContent='Scanning...'; prog.style.display='block';
+  let totalTagged=0, safety=0;
+  try{
+    while(safety++ < 60){
+      const res=await fetch('/api/enrich?token='+encodeURIComponent(pw())+'&limit=30');
+      const d=await res.json();
+      if(!res.ok) throw new Error(d.error||res.status);
+      totalTagged+=d.tagged||0;
+      prog.textContent='Tagged '+totalTagged+' so far, '+d.remaining+' captions still to read...';
+      if(d.done || d.processed===0) break;
+    }
+    prog.textContent='Reading done, tagged '+totalTagged+'. Updating Facebook and the dashboard...';
+    await fetch('/api/sync?mode=backfill&token='+encodeURIComponent(pw()));
+    prog.textContent='All done. Tagged '+totalTagged+' posts. Refreshing the list of any left to check...';
+    await load();
+    prog.textContent='Finished. '+totalTagged+' posts tagged automatically. Anything the AI was unsure about is listed below.';
+  }catch(err){
+    prog.textContent='Stopped: '+err.message;
+  }
+  btn.disabled=false; btn.textContent='Scan captions with AI';
+}
+$('#scan').addEventListener('click',scan);
+
 load();
 </script>
 </body>
