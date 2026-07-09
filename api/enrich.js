@@ -34,33 +34,56 @@ async function classify(caption) {
   try { return JSON.parse(m[0]); } catch { return null; }
 }
 
-// Link Facebook posts to their same-day Instagram destination, working directly
-// over the stored data (not a live pull), so it always sees the pairs.
+// Link Facebook posts to Instagram by pairing them in order within each day.
+// Your team posts ~2 destinations a day, so single-destination matching misses most.
+// Cross-posts publish in the same order, so 1st FB <-> 1st IG, 2nd <-> 2nd, etc.
 async function linkFacebook() {
-  let ig = [], from = 0;
-  while (true) {
-    const { data, error } = await supabase.from('posts')
-      .select('posted_at,resort,country,region')
-      .eq('platform', 'Instagram').not('resort', 'is', null).range(from, from + 999);
-    if (error) throw error;
-    ig = ig.concat(data || []);
-    if (!data || data.length < 1000) break;
-    from += 1000;
+  const fetchAll = async (platform, onlyUntagged) => {
+    let out = [], from = 0;
+    while (true) {
+      let q = supabase.from('posts').select('id,posted_at,resort,country,region').eq('platform', platform);
+      if (onlyUntagged) q = q.is('resort', null);
+      const { data, error } = await q.range(from, from + 999);
+      if (error) throw error;
+      out = out.concat(data || []);
+      if (!data || data.length < 1000) break;
+      from += 1000;
+    }
+    return out;
+  };
+  const ig = await fetchAll('Instagram', false);
+  const fb = await fetchAll('Facebook', true);
+
+  const day = (p) => p.posted_at.slice(0, 10);
+  const igByDay = {}, fbByDay = {};
+  for (const p of ig) (igByDay[day(p)] = igByDay[day(p)] || []).push(p);
+  for (const p of fb) (fbByDay[day(p)] = fbByDay[day(p)] || []).push(p);
+
+  // Collect assignments (destination -> list of Facebook ids) then bulk update.
+  const assign = {};
+  const add = (dest, id) => { const k = JSON.stringify(dest); (assign[k] = assign[k] || { dest, ids: [] }).ids.push(id); };
+
+  for (const d of Object.keys(fbByDay)) {
+    const igList = (igByDay[d] || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+    const fbList = fbByDay[d].slice().sort((a, b) => new Date(a.posted_at) - new Date(b.posted_at));
+    if (igList.length === fbList.length && igList.length > 0) {
+      for (let i = 0; i < fbList.length; i++) if (igList[i].resort) add([igList[i].resort, igList[i].country, igList[i].region], fbList[i].id);
+    } else {
+      const dests = new Set(igList.filter(x => x.resort).map(x => JSON.stringify([x.resort, x.country, x.region])));
+      if (dests.size === 1) { const dd = JSON.parse([...dests][0]); for (const f of fbList) add(dd, f.id); }
+    }
   }
-  const dayDest = {};
-  for (const p of ig) { const d = p.posted_at.slice(0, 10); (dayDest[d] = dayDest[d] || new Set()).add(JSON.stringify([p.resort, p.country, p.region])); }
+
   let updated = 0;
-  for (const [day, set] of Object.entries(dayDest)) {
-    if (set.size !== 1) continue; // only days that clearly point to one place
-    const [resort, country, region] = JSON.parse([...set][0]);
-    const next = new Date(day + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1);
-    const { data, error } = await supabase.from('posts')
-      .update({ resort, country, region })
-      .eq('platform', 'Facebook').is('resort', null)
-      .gte('posted_at', day + 'T00:00:00Z').lt('posted_at', next.toISOString())
-      .select('id');
-    if (error) throw error;
-    updated += data ? data.length : 0;
+  for (const k of Object.keys(assign)) {
+    const { dest, ids } = assign[k];
+    for (let j = 0; j < ids.length; j += 200) {
+      const { data, error } = await supabase.from('posts')
+        .update({ resort: dest[0], country: dest[1], region: dest[2] })
+        .in('id', ids.slice(j, j + 200)).select('id');
+      if (error) throw error;
+      updated += data ? data.length : 0;
+    }
   }
   return updated;
 }
