@@ -182,14 +182,7 @@ async function scan(){
   btn.disabled=true; btn.textContent='Working...'; prog.style.display='block';
   let totalTagged=0, safety=0;
   try{
-    while(safety++ < 60){
-      const res=await fetch('/api/enrich?token='+encodeURIComponent(pw())+'&limit=30');
-      const d=await res.json();
-      if(!res.ok) throw new Error(d.error||res.status);
-      totalTagged+=d.tagged||0;
-      prog.textContent='Reading captions: tagged '+totalTagged+' so far, '+d.remaining+' to go...';
-      if(d.done || d.processed===0) break;
-    }
+    // 1. Refresh each month first, so Instagram's real posting times come in.
     const now=new Date(), months=[];
     for(let i=13;i>=0;i--){
       const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
@@ -198,12 +191,22 @@ async function scan(){
         label:d.toLocaleDateString('en-GB',{month:'short',year:'numeric'})});
     }
     for(const m of months){
-      prog.textContent='Updating '+m.label+' (matching Facebook to Instagram by time)...';
+      prog.textContent='Refreshing '+m.label+'...';
       await fetch('/api/sync?from='+m.from+'&to='+m.to+'&token='+encodeURIComponent(pw()));
+    }
+    // 2. Read any new captions, then (on the final call) link Facebook by exact time.
+    let linked=0;
+    while(safety++ < 60){
+      prog.textContent='Reading captions and matching Facebook to Instagram by time...';
+      const res=await fetch('/api/enrich?token='+encodeURIComponent(pw())+'&limit=30');
+      const d=await res.json();
+      if(!res.ok) throw new Error(d.error||res.status);
+      totalTagged+=d.tagged||0; if(typeof d.linked==='number') linked=d.linked;
+      if(d.done || d.processed===0) break;
     }
     prog.textContent='Refreshing what is left to check...';
     await load();
-    prog.textContent='Finished. '+totalTagged+' new posts tagged by AI, and Facebook now matched to Instagram across your history. Anything still unsure is listed below.';
+    prog.textContent='Finished. '+totalTagged+' new posts tagged by AI, and '+linked+' Facebook posts matched to Instagram by exact time. Anything still unsure is listed below.';
   }catch(err){
     prog.textContent='Stopped: '+err.message;
   }
