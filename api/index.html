@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GTC Social Performance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Lato:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{--navy:#17213D;--blue:#2F6DB9;--gold:#C9A24B;--grey:#9AA0A6;--cream:#F6F7ED;
+    --ink:#17213D;--muted:#6B7385;--line:#E3E1D4;--card:#FFFFFF;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--cream);color:var(--ink);font-family:'Lato',system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3{font-family:'Poppins',system-ui,sans-serif;}
+  .num{font-family:'Poppins',system-ui,sans-serif;font-variant-numeric:tabular-nums;font-feature-settings:"tnum";}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 18px 60px;}
+  header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand .mark{width:40px;height:40px;border-radius:9px;background:var(--navy);display:grid;place-items:center;color:#fff;font-family:'Poppins';font-weight:700;font-size:17px;letter-spacing:.5px;}
+  .brand h1{margin:0;font-size:20px;font-weight:600;line-height:1.1;}
+  .brand p{margin:2px 0 0;font-size:12px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase;}
+  .datastamp{font-size:12px;color:var(--muted);text-align:right;}
+  .datastamp b{color:var(--navy);font-family:'Poppins';font-weight:600;}
+  .controls{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:16px;}
+  .ctl{display:flex;flex-direction:column;gap:6px;}
+  .ctl > label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;}
+  .seg{display:flex;background:var(--cream);border:1px solid var(--line);border-radius:9px;padding:3px;flex-wrap:wrap;}
+  .seg button{border:0;background:transparent;padding:7px 11px;border-radius:6px;font-family:'Poppins';font-size:12.5px;font-weight:500;color:var(--navy);cursor:pointer;transition:.12s;}
+  .seg button:hover{background:#fff;}
+  .seg button.on{background:var(--navy);color:#fff;}
+  select{font-family:'Poppins';font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--navy);min-width:180px;cursor:pointer;}
+  .region-seg button.on[data-r="UK&I"]{background:var(--navy);}
+  .region-seg button.on[data-r="Europe"]{background:var(--blue);}
+  .region-seg button.on[data-r="International"]{background:var(--gold);color:var(--navy);}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 16px;}
+  .kpi .k-label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;}
+  .kpi .k-val{font-size:26px;font-weight:600;margin:6px 0 3px;}
+  .kpi .k-delta{font-size:12px;font-weight:700;font-family:'Poppins';}
+  .up{color:#2E7D4F;}.down{color:#B23A3A;}.flat{color:var(--muted);}
+  .grid2{display:grid;grid-template-columns:1.35fr 1fr;gap:14px;margin-bottom:16px;}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;}
+  .panel h3{margin:0 0 2px;font-size:14px;font-weight:600;}
+  .panel .sub{font-size:12px;color:var(--muted);margin:0 0 12px;}
+  .chart-box{position:relative;height:240px;}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--navy);font-family:'Poppins';}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{font-family:'Poppins';font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);text-align:right;padding:8px 10px;border-bottom:2px solid var(--navy);}
+  thead th:first-child,thead th:nth-child(2){text-align:left;}
+  tbody td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right;}
+  tbody td:first-child,tbody td:nth-child(2){text-align:left;}
+  .region-row td{background:var(--cream);font-family:'Poppins';font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding:7px 10px;color:var(--navy);}
+  .region-row .rtag{display:inline-flex;align-items:center;gap:7px;}
+  .dest-name a{color:var(--navy);text-decoration:none;font-weight:700;font-family:'Poppins';font-size:13px;}
+  .dest-name a:hover{color:var(--blue);text-decoration:underline;}
+  .dest-name .country{display:block;font-size:11px;color:var(--muted);font-weight:400;font-family:'Lato';}
+  .plat-chip{display:inline-block;font-size:10px;font-family:'Poppins';font-weight:600;padding:1px 6px;border-radius:5px;margin-left:6px;vertical-align:middle;}
+  .p-ig{background:#FCE4EC;color:#AD1457;}.p-fb{background:#E3F2FD;color:#1565C0;}
+  .val{font-family:'Poppins';font-variant-numeric:tabular-nums;font-feature-settings:"tnum";}
+  .posts-pill{display:inline-block;min-width:26px;text-align:center;background:var(--cream);border:1px solid var(--line);border-radius:20px;padding:2px 9px;font-family:'Poppins';font-size:12px;font-weight:600;}
+  tfoot td{padding:11px 10px;border-top:2px solid var(--navy);font-family:'Poppins';font-weight:700;font-size:13px;text-align:right;}
+  tfoot td:first-child{text-align:left;}
+  .state{padding:60px 20px;text-align:center;color:var(--muted);font-family:'Poppins';}
+  @media(max-width:860px){.kpis{grid-template-columns:repeat(2,1fr);}.grid2{grid-template-columns:1fr;}}
+  @media(max-width:520px){.kpi .k-val{font-size:22px;}thead th:nth-child(n+5),tbody td:nth-child(n+5),tfoot td:nth-child(n+5){display:none;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="mark">GTC</div>
+      <div>
+        <h1>Social Performance by Destination</h1>
+        <p>Golf Travel Centre &nbsp;&middot;&nbsp; Instagram &amp; Facebook organic</p>
+      </div>
+    </div>
+    <div class="datastamp">Showing <b id="stamp-period">-</b><br><span id="stamp-refresh">Loading...</span></div>
+  </header>
+
+  <div id="app" style="display:none;">
+    <section class="controls">
+      <div class="ctl"><label>Time period</label>
+        <div class="seg" id="gran-seg">
+          <button data-g="week">Weekly</button>
+          <button data-g="fortnight">Fortnightly</button>
+          <button data-g="month" class="on">Monthly</button>
+          <button data-g="quarter">Quarterly</button>
+          <button data-g="half">6 months</button>
+          <button data-g="year">Yearly</button>
+        </div>
+      </div>
+      <div class="ctl"><label>Which one</label><select id="period-select"></select></div>
+      <div class="ctl"><label>Platform</label>
+        <div class="seg" id="plat-seg">
+          <button data-p="all" class="on">All</button>
+          <button data-p="Instagram">Instagram</button>
+          <button data-p="Facebook">Facebook</button>
+        </div>
+      </div>
+      <div class="ctl"><label>Region</label>
+        <div class="seg region-seg" id="region-seg">
+          <button data-r="all" class="on">All</button>
+          <button data-r="UK&I">UK &amp; I</button>
+          <button data-r="Europe">Europe</button>
+          <button data-r="International">International</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="kpis" id="kpis"></section>
+
+    <section class="grid2">
+      <div class="panel">
+        <h3>Reach over time</h3>
+        <p class="sub" id="trend-sub">Reach by region across recent periods</p>
+        <div class="chart-box"><canvas id="trendChart"></canvas></div>
+      </div>
+      <div class="panel">
+        <h3>This period by region</h3>
+        <p class="sub">Share of reach across regions and general content</p>
+        <div class="chart-box"><canvas id="regionChart"></canvas></div>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--navy)"></i>UK &amp; I</span>
+          <span><i class="dot" style="background:var(--blue)"></i>Europe</span>
+          <span><i class="dot" style="background:var(--gold)"></i>International</span>
+          <span><i class="dot" style="background:var(--grey)"></i>General</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>Destination scorecard</h3>
+      <p class="sub" id="score-sub">Every destination posted about in this period, grouped by region</p>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>Destination</th><th></th><th>Posts</th><th>Reach</th><th>Impressions</th><th>Engagement</th><th>Eng. rate</th>
+          </tr></thead>
+          <tbody id="score-body"></tbody>
+          <tfoot id="score-foot"></tfoot>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div id="loading" class="state">Loading your posts...</div>
+  <div id="error" class="state" style="display:none;"></div>
+</div>
+
+<script>
+const REGION_ORDER=["UK&I","Europe","International"];
+const REGION_LABEL={"UK&I":"UK & I","Europe":"Europe","International":"International","Untagged":"General"};
+const REGION_COLOR={"UK&I":"#17213D","Europe":"#2F6DB9","International":"#C9A24B","Untagged":"#9AA0A6"};
+const CHART_REGIONS=["UK&I","Europe","International","Untagged"];
+
+let POSTS=[];
+let state={gran:"month",period:null,platform:"all",region:"all"};
+let trendChart,regionChart;
+
+const num=(v)=>{const n=Number(v);return Number.isFinite(n)?n:0;};
+function mondayOf(date){const x=new Date(date);const day=(x.getDay()+6)%7;x.setDate(x.getDate()-day);x.setHours(0,0,0,0);return x;}
+const EPOCH_MON=mondayOf(new Date(2025,0,6));
+function weekIndex(date){return Math.floor((mondayOf(date)-EPOCH_MON)/(7*864e5));}
+function fmtDM(d){return d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});}
+function periodInfo(gran,date){
+  const y=date.getFullYear();
+  if(gran==="week"){const wi=weekIndex(date);const s=new Date(EPOCH_MON.getTime()+wi*7*864e5);return {key:"w"+wi,label:"Wk of "+fmtDM(s)+" "+s.getFullYear(),sort:wi};}
+  if(gran==="fortnight"){const fi=Math.floor(weekIndex(date)/2);const s=new Date(EPOCH_MON.getTime()+fi*14*864e5);const e=new Date(s.getTime()+13*864e5);return {key:"f"+fi,label:fmtDM(s)+" to "+fmtDM(e)+" "+e.getFullYear(),sort:fi};}
+  if(gran==="month"){return {key:"m"+y+"-"+date.getMonth(),label:date.toLocaleDateString('en-GB',{month:'long',year:'numeric'}),sort:y*12+date.getMonth()};}
+  if(gran==="quarter"){const q=Math.floor(date.getMonth()/3)+1;return {key:"q"+y+"-"+q,label:"Q"+q+" "+y,sort:y*4+q};}
+  if(gran==="half"){const h=date.getMonth()<6?1:2;return {key:"h"+y+"-"+h,label:(h===1?"Jan to Jun ":"Jul to Dec ")+y,sort:y*2+h};}
+  return {key:"y"+y,label:String(y),sort:y};
+}
+function periods(gran){
+  const map=new Map();
+  POSTS.forEach(p=>{const pi=periodInfo(gran,p.date);if(!map.has(pi.key))map.set(pi.key,{...pi,posts:[]});map.get(pi.key).posts.push(p);});
+  return [...map.values()].sort((a,b)=>a.sort-b.sort);
+}
+function plat(posts){return state.platform==="all"?posts:posts.filter(p=>p.platform===state.platform);}
+function reg(posts){return state.region==="all"?posts:posts.filter(p=>p.region===state.region);}
+function totals(posts){const t={posts:posts.length,reach:0,impressions:0,engagement:0};posts.forEach(p=>{t.reach+=p.reach;t.impressions+=p.impressions;t.engagement+=p.engagement;});t.er=t.reach?t.engagement/t.reach:0;return t;}
+function fmt(n){return n>=1e6?(n/1e6).toFixed(2)+"m":n>=1e4?Math.round(n/1e3)+"k":n>=1e3?(n/1e3).toFixed(1)+"k":String(Math.round(n));}
+function fmtFull(n){return Math.round(n).toLocaleString('en-GB');}
+function pct(n){return (n*100).toFixed(2)+"%";}
+
+function buildPeriodSelect(){
+  const list=periods(state.gran),sel=document.getElementById('period-select');
+  sel.innerHTML='';
+  list.slice().reverse().forEach(p=>{const o=document.createElement('option');o.value=p.key;o.textContent=p.label;sel.appendChild(o);});
+  if(!list.find(p=>p.key===state.period))state.period=list.length?list[list.length-1].key:null;
+  sel.value=state.period;
+}
+function curObj(){return periods(state.gran).find(p=>p.key===state.period);}
+
+function renderKPIs(){
+  const list=periods(state.gran),idx=list.findIndex(p=>p.key===state.period);
+  const cur=list[idx],prev=idx>0?list[idx-1]:null;
+  const t=totals(reg(plat(cur?cur.posts:[])));
+  const pt=prev?totals(reg(plat(prev.posts))):null;
+  const cards=[
+    {label:"Posts",val:fmtFull(t.posts),cur:t.posts,cmp:pt?pt.posts:null},
+    {label:"Reach",val:fmtFull(t.reach),cur:t.reach,cmp:pt?pt.reach:null},
+    {label:"Engagement",val:fmtFull(t.engagement),cur:t.engagement,cmp:pt?pt.engagement:null},
+    {label:"Eng. rate",val:pct(t.er),cur:t.er,cmp:pt?pt.er:null,isRate:true}
+  ];
+  document.getElementById('kpis').innerHTML=cards.map(c=>{
+    let delta='';
+    if(c.cmp!==null&&c.cmp!==undefined){
+      const diff=c.isRate?(c.cur-c.cmp)*100:(c.cmp?(c.cur-c.cmp)/c.cmp*100:0);
+      const cls=diff>0.5?'up':diff<-0.5?'down':'flat';
+      const arrow=diff>0.5?'&#9650;':diff<-0.5?'&#9660;':'&#8226;';
+      const txt=c.isRate?(diff>=0?'+':'')+diff.toFixed(2)+' pts':(diff>=0?'+':'')+diff.toFixed(0)+'%';
+      delta=`<div class="k-delta ${cls}">${arrow} ${txt} vs previous</div>`;
+    }
+    return `<div class="kpi"><div class="k-label">${c.label}</div><div class="k-val num">${c.val}</div>${delta}</div>`;
+  }).join('');
+}
+function chartReg(p){return p.region||"Untagged";}
+function renderTrend(){
+  const list=periods(state.gran),idx=list.findIndex(p=>p.key===state.period);
+  const w={week:12,fortnight:10,month:12,quarter:8,half:6,year:5}[state.gran];
+  const slice=list.slice(Math.max(0,idx-w+1),idx+1);
+  const labels=slice.map(p=>p.label.replace(' to ',' – '));
+  const datasets=CHART_REGIONS.map(r=>({label:REGION_LABEL[r],
+    data:slice.map(p=>totals(plat(p.posts).filter(x=>chartReg(x)===r)).reach),
+    backgroundColor:REGION_COLOR[r],borderRadius:3,stack:'reach'}));
+  document.getElementById('trend-sub').textContent="Reach by region across the last "+slice.length+" "+({week:"weeks",fortnight:"fortnights",month:"months",quarter:"quarters",half:"half-years",year:"years"}[state.gran]);
+  if(trendChart)trendChart.destroy();
+  trendChart=new Chart(document.getElementById('trendChart'),{type:'bar',data:{labels,datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmtFull(c.raw)}}},
+      scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:10},maxRotation:40}},
+              y:{stacked:true,grid:{color:'#EDEBDF'},ticks:{callback:v=>fmt(v),font:{size:10}}}}}});
+}
+function renderRegionChart(){
+  const cur=curObj(),posts=plat(cur?cur.posts:[]);
+  const data=CHART_REGIONS.map(r=>totals(posts.filter(x=>chartReg(x)===r)).reach);
+  if(regionChart)regionChart.destroy();
+  regionChart=new Chart(document.getElementById('regionChart'),{type:'doughnut',
+    data:{labels:CHART_REGIONS.map(r=>REGION_LABEL[r]),datasets:[{data,backgroundColor:CHART_REGIONS.map(r=>REGION_COLOR[r]),borderColor:'#fff',borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+fmtFull(c.raw)}}}}});
+}
+function renderScorecard(){
+  const cur=curObj(),posts=reg(plat(cur?cur.posts:[]));
+  const byDest=new Map();
+  posts.forEach(p=>{
+    if(!p.region||!p.dest)return; // only tagged destinations appear here
+    if(!byDest.has(p.dest))byDest.set(p.dest,{dest:p.dest,country:p.country,region:p.region,posts:0,reach:0,impressions:0,engagement:0,ig:0,fb:0,url:p.url});
+    const o=byDest.get(p.dest);o.posts++;o.reach+=p.reach;o.impressions+=p.impressions;o.engagement+=p.engagement;if(p.platform==="Instagram")o.ig++;else o.fb++;if(!o.url&&p.url)o.url=p.url;});
+  const body=document.getElementById('score-body');body.innerHTML='';
+  const show=state.region==="all"?REGION_ORDER:[state.region];let any=false;
+  show.forEach(r=>{
+    const rows=[...byDest.values()].filter(d=>d.region===r).sort((a,b)=>b.reach-a.reach);
+    if(!rows.length)return;any=true;
+    const rt=document.createElement('tr');rt.className='region-row';
+    const rTot=rows.reduce((s,d)=>({p:s.p+d.posts,re:s.re+d.reach}),{p:0,re:0});
+    rt.innerHTML=`<td colspan="7"><span class="rtag"><i class="dot" style="background:${REGION_COLOR[r]}"></i>${REGION_LABEL[r]} &nbsp;&middot;&nbsp; ${rTot.p} posts &middot; ${fmtFull(rTot.re)} reach</span></td>`;
+    body.appendChild(rt);
+    rows.forEach(d=>{
+      const er=d.reach?d.engagement/d.reach:0;
+      const chips=(d.ig?`<span class="plat-chip p-ig">IG ${d.ig}</span>`:'')+(d.fb?`<span class="plat-chip p-fb">FB ${d.fb}</span>`:'');
+      const link=d.url?`<a href="${d.url}" target="_blank" rel="noopener">${d.dest}</a>`:`<span style="font-family:Poppins;font-weight:700;font-size:13px;">${d.dest}</span>`;
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td class="dest-name">${link}${chips}<span class="country">${d.country||''}</span></td>
+        <td></td><td><span class="posts-pill">${d.posts}</span></td>
+        <td class="val">${fmtFull(d.reach)}</td><td class="val">${fmtFull(d.impressions)}</td>
+        <td class="val">${fmtFull(d.engagement)}</td><td class="val">${pct(er)}</td>`;
+      body.appendChild(tr);
+    });
+  });
+  if(!any)body.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;">No destinations tagged in this period.</td></tr>';
+  const t=totals([...byDest.values()]);
+  document.getElementById('score-foot').innerHTML=`<tr><td>Destinations total</td><td></td>
+    <td class="val">${t.posts}</td><td class="val">${fmtFull(t.reach)}</td><td class="val">${fmtFull(t.impressions)}</td>
+    <td class="val">${fmtFull(t.engagement)}</td><td class="val">${pct(t.er)}</td></tr>`;
+}
+function renderStamp(){
+  const cur=curObj();
+  document.getElementById('stamp-period').textContent=cur?cur.label:'-';
+  document.getElementById('score-sub').textContent="Every destination posted about in "+(cur?cur.label:'this period')+", grouped by region. Click a name to open the post.";
+}
+function renderAll(){renderStamp();renderKPIs();renderTrend();renderRegionChart();renderScorecard();}
+
+document.getElementById('gran-seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.gran=b.dataset.g;[...e.currentTarget.children].forEach(x=>x.classList.toggle('on',x===b));buildPeriodSelect();renderAll();});
+document.getElementById('plat-seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.platform=b.dataset.p;[...e.currentTarget.children].forEach(x=>x.classList.toggle('on',x===b));renderAll();});
+document.getElementById('region-seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.region=b.dataset.r;[...e.currentTarget.children].forEach(x=>x.classList.toggle('on',x===b));renderAll();});
+document.getElementById('period-select').addEventListener('change',e=>{state.period=e.target.value;renderAll();});
+
+async function load(){
+  try{
+    const res=await fetch('/api/data');
+    if(!res.ok) throw new Error('Could not load data ('+res.status+')');
+    const json=await res.json();
+    POSTS=(json.posts||[]).map(r=>({
+      date:new Date(r.posted_at), dest:r.resort, country:r.country, region:r.region,
+      platform:r.platform, reach:num(r.reach), impressions:num(r.impressions), engagement:num(r.engagement),
+      url:r.permalink
+    })).filter(p=>p.date && !isNaN(p.date));
+    if(!POSTS.length){ document.getElementById('loading').textContent='No posts yet. Once a sync has run, they will appear here.'; return; }
+    const ref=json.lastSynced?new Date(json.lastSynced):null;
+    document.getElementById('stamp-refresh').textContent = ref? 'Updated '+ref.toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+    document.getElementById('loading').style.display='none';
+    document.getElementById('app').style.display='block';
+    buildPeriodSelect(); renderAll();
+  }catch(err){
+    document.getElementById('loading').style.display='none';
+    const e=document.getElementById('error'); e.style.display='block'; e.textContent='Something went wrong loading the data: '+err.message;
+  }
+}
+load();
+</script>
+</body>
+</html>
