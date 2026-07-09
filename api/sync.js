@@ -9,14 +9,14 @@ const CONFIG = {
   Instagram: {
     connector: 'instagram', accountId: '17841404427634298', accountField: 'account_id',
     engagementField: 'media_engagement',
-    fields: { id:'media_id', date:'date', permalink:'media_url', caption:'media_caption',
+    fields: { id:'media_id', date:'date', created:'created_time', permalink:'media_url', caption:'media_caption',
       reach:'media_reach', impressions:'media_impressions', likes:'media_like_count',
       comments:'media_comments_count', saves:'media_saved', shares:'media_shares' }
   },
   Facebook: {
     connector: 'facebook_organic', accountId: '984913224898857', accountField: 'page_id',
     engagementField: null,
-    fields: { id:'post_id', date:'date', permalink:'permalink_url', caption:'message',
+    fields: { id:'post_id', date:'date', created:'post_created_time', permalink:'permalink_url', caption:'message',
       reach:'post_impressions_unique', impressions:'post_impressions', likes:'post_reactions_like_total',
       comments:'post_comments', saves:'post_saves', shares:'post_shares' }
   }
@@ -41,7 +41,7 @@ async function fetchWindsor(platform, window){
       const json=await res.json(); const rows=json.data||json||[]; const f=fieldMap;
       return rows.map((r)=>{const likes=num(r[f.likes]),comments=num(r[f.comments]),saves=num(r[f.saves]),shares=num(r[f.shares]);
         const eng=engField?num(r[engField]):0;
-        return {id:String(r[f.id]),platform,posted_at:new Date(r[f.date]).toISOString(),
+        return {id:String(r[f.id]),platform,posted_at:new Date(r[f.created]||r[f.date]).toISOString(),
           permalink:r[f.permalink]||null,caption:r[f.caption]||'',reach:num(r[f.reach]),impressions:num(r[f.impressions]),
           likes,comments,saves,shares,engagement:eng>0?eng:(likes+comments+saves+shares)};
       }).filter((p)=>p.id&&p.id!=='undefined');
@@ -90,14 +90,21 @@ async function runSync(mode='recent'){
   }
   for(const p of all){
     const ex=existing[p.id];
-    if(ex&&(ex.reviewed||ex.resort)){p.resort=ex.resort;p.country=ex.country;p.region=ex.region;p.reviewed=ex.reviewed;p.ai_checked=ex.ai_checked;}
+    if(ex&&ex.reviewed){p.resort=ex.resort;p.country=ex.country;p.region=ex.region;p.reviewed=ex.reviewed;p.ai_checked=ex.ai_checked;}
     else{const r=resolve(p.caption);p.resort=r.resort;p.country=r.country;p.region=r.region;p.reviewed=ex?ex.reviewed:false;p.ai_checked=ex?ex.ai_checked:false;}
     p.last_synced=now.toISOString();
   }
-  // Facebook cross-posts inherit their same-day Instagram destination when unambiguous.
-  const igByDay={};
-  for(const p of all)if(p.platform==='Instagram'&&p.resort){const d=p.posted_at.slice(0,10);(igByDay[d]=igByDay[d]||new Set()).add(JSON.stringify([p.resort,p.country,p.region]));}
-  for(const p of all)if(p.platform==='Facebook'&&!p.resort&&!p.reviewed){const s=igByDay[p.posted_at.slice(0,10)];if(s&&s.size===1){const[resort,country,region]=JSON.parse([...s][0]);p.resort=resort;p.country=country;p.region=region;}}
+  // Facebook cross-posts inherit the destination of the Instagram post published at
+  // the same time (within 30 minutes). Precise, so no more same-day mix-ups.
+  const igTagged=all.filter(p=>p.platform==='Instagram'&&p.resort).map(p=>({t:new Date(p.posted_at).getTime(),dest:[p.resort,p.country,p.region]}));
+  const WINDOW=30*60*1000;
+  for(const p of all){
+    if(p.platform==='Facebook'&&!p.resort&&!p.reviewed){
+      const t=new Date(p.posted_at).getTime();
+      const near=new Set(igTagged.filter(x=>Math.abs(x.t-t)<=WINDOW).map(x=>JSON.stringify(x.dest)));
+      if(near.size===1){const[resort,country,region]=JSON.parse([...near][0]);p.resort=resort;p.country=country;p.region=region;}
+    }
+  }
 
   let upserted=0;
   for(let i=0;i<all.length;i+=500){
