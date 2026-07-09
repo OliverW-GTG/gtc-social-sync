@@ -34,9 +34,8 @@ async function classify(caption) {
   try { return JSON.parse(m[0]); } catch { return null; }
 }
 
-// Link Facebook posts to Instagram by pairing them in order within each day.
-// Your team posts ~2 destinations a day, so single-destination matching misses most.
-// Cross-posts publish in the same order, so 1st FB <-> 1st IG, 2nd <-> 2nd, etc.
+// Link Facebook posts to Instagram by exact posting time. Cross-posts publish
+// within seconds of each other, so this is precise even on multi-destination days.
 async function linkFacebook() {
   const fetchAll = async (platform, onlyUntagged) => {
     let out = [], from = 0;
@@ -51,27 +50,18 @@ async function linkFacebook() {
     }
     return out;
   };
-  const ig = await fetchAll('Instagram', false);
+  const ig = (await fetchAll('Instagram', false))
+    .filter(p => p.resort && !p.posted_at.endsWith('T00:00:00.000Z'))
+    .map(p => ({ t: new Date(p.posted_at).getTime(), dest: [p.resort, p.country, p.region] }));
   const fb = await fetchAll('Facebook', true);
 
-  const day = (p) => p.posted_at.slice(0, 10);
-  const igByDay = {}, fbByDay = {};
-  for (const p of ig) (igByDay[day(p)] = igByDay[day(p)] || []).push(p);
-  for (const p of fb) (fbByDay[day(p)] = fbByDay[day(p)] || []).push(p);
-
-  // Collect assignments (destination -> list of Facebook ids) then bulk update.
+  const WINDOW = 3 * 60 * 1000; // 3 minutes
   const assign = {};
-  const add = (dest, id) => { const k = JSON.stringify(dest); (assign[k] = assign[k] || { dest, ids: [] }).ids.push(id); };
-
-  for (const d of Object.keys(fbByDay)) {
-    const igList = (igByDay[d] || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
-    const fbList = fbByDay[d].slice().sort((a, b) => new Date(a.posted_at) - new Date(b.posted_at));
-    if (igList.length === fbList.length && igList.length > 0) {
-      for (let i = 0; i < fbList.length; i++) if (igList[i].resort) add([igList[i].resort, igList[i].country, igList[i].region], fbList[i].id);
-    } else {
-      const dests = new Set(igList.filter(x => x.resort).map(x => JSON.stringify([x.resort, x.country, x.region])));
-      if (dests.size === 1) { const dd = JSON.parse([...dests][0]); for (const f of fbList) add(dd, f.id); }
-    }
+  for (const f of fb) {
+    const t = new Date(f.posted_at).getTime();
+    let best = null, bestDiff = Infinity;
+    for (const x of ig) { const d = Math.abs(x.t - t); if (d <= WINDOW && d < bestDiff) { bestDiff = d; best = x; } }
+    if (best) { const k = JSON.stringify(best.dest); (assign[k] = assign[k] || { dest: best.dest, ids: [] }).ids.push(f.id); }
   }
 
   let updated = 0;
