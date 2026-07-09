@@ -67,13 +67,16 @@ async function buildResolver(){
     return {resort:null,country:null,region:null};};
 }
 
-async function runSync(mode='recent'){
+async function runSync(opts={}){
+  const {mode='recent',from,to}=opts;
   const resolve=await buildResolver(); const now=new Date();
   let windows;
-  if(mode==='recent')windows=[{recent:true}];
+  if(from&&to)windows=monthChunks(new Date(from),new Date(to));
+  else if(mode==='recent')windows=[{recent:true}];
   else if(mode==='reconcile')windows=monthChunks(new Date(now.getFullYear(),now.getMonth(),1),now);
   else if(mode==='backfill')windows=monthChunks(new Date(now.getFullYear()-1,now.getMonth(),1),now);
   else throw new Error('Unknown mode: '+mode);
+  const label=(from&&to)?'range':mode;
 
   const all=[]; const problems=[];
   for(const platform of ['Instagram','Facebook']){
@@ -114,12 +117,12 @@ async function runSync(mode='recent'){
   const byPlatform={};
   for(const p of all){byPlatform[p.platform]=byPlatform[p.platform]||{posts:0,tagged:0};byPlatform[p.platform].posts++;if(p.resort)byPlatform[p.platform].tagged++;}
   const unresolved=all.filter(p=>!p.resort).length;
-  await supabase.from('sync_log').insert({mode,rows_upserted:upserted,notes:[`${unresolved} unmatched`,...problems].join(' | ')});
-  return {mode,upserted,unresolved,byPlatform,problems};
+  await supabase.from('sync_log').insert({mode:label,rows_upserted:upserted,notes:[`${unresolved} unmatched`,...problems].join(' | ')});
+  return {mode:label,upserted,unresolved,byPlatform,problems};
 }
 
 export default async function handler(req,res){
   if(!req.query.token||req.query.token!==process.env.SYNC_SECRET)return res.status(401).json({error:'Unauthorised'});
-  try{return res.status(200).json({ok:true,...await runSync(req.query.mode||'recent')});}
+  try{return res.status(200).json({ok:true,...await runSync({mode:req.query.mode,from:req.query.from,to:req.query.to})});}
   catch(err){console.error(err);return res.status(500).json({ok:false,error:String(err.message||err)});}
 }
