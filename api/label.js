@@ -18,14 +18,16 @@ export default async function handler(req, res) {
       const { data: untagged, error } = await supabase
         .from('posts')
         .select('id,platform,posted_at,caption,permalink')
+        .eq('platform', 'Instagram')
         .is('resort', null)
         .eq('reviewed', false)
+        .neq('caption', '')
         .order('posted_at', { ascending: false })
         .limit(300);
       if (error) throw error;
       const { count } = await supabase
         .from('posts').select('id', { count: 'exact', head: true })
-        .is('resort', null).eq('reviewed', false);
+        .eq('platform', 'Instagram').is('resort', null).eq('reviewed', false).neq('caption', '');
       return res.status(200).json({
         untagged: untagged || [], remaining: count || 0,
         resorts: resorts || [], countries: countries || []
