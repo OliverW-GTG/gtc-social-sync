@@ -102,17 +102,11 @@ async function runSync(opts={}){
     else{const r=resolve(p.caption);p.resort=r.resort;p.country=r.country;p.region=r.region;p.reviewed=ex?ex.reviewed:false;p.ai_checked=ex?ex.ai_checked:false;}
     p.last_synced=now.toISOString();
   }
-  // Facebook cross-posts inherit the destination of the Instagram post published at
-  // the same time (within 30 minutes). Precise, so no more same-day mix-ups.
-  const igTagged=all.filter(p=>p.platform==='Instagram'&&p.resort).map(p=>({t:new Date(p.posted_at).getTime(),dest:[p.resort,p.country,p.region]}));
-  const WINDOW=30*60*1000;
-  for(const p of all){
-    if(p.platform==='Facebook'&&!p.resort&&!p.reviewed){
-      const t=new Date(p.posted_at).getTime();
-      const near=new Set(igTagged.filter(x=>Math.abs(x.t-t)<=WINDOW).map(x=>JSON.stringify(x.dest)));
-      if(near.size===1){const[resort,country,region]=JSON.parse([...near][0]);p.resort=resort;p.country=country;p.region=region;}
-    }
-  }
+  // Instagram from Windsor is date-only (no time of day), so match Facebook to its
+  // same-day Instagram destination, but only when that day points to a single place.
+  const igByDay={};
+  for(const p of all)if(p.platform==='Instagram'&&p.resort){const d=p.posted_at.slice(0,10);(igByDay[d]=igByDay[d]||new Set()).add(JSON.stringify([p.resort,p.country,p.region]));}
+  for(const p of all)if(p.platform==='Facebook'&&!p.resort&&!p.reviewed){const s=igByDay[p.posted_at.slice(0,10)];if(s&&s.size===1){const[resort,country,region]=JSON.parse([...s][0]);p.resort=resort;p.country=country;p.region=region;}}
 
   let upserted=0;
   for(let i=0;i<all.length;i+=500){
