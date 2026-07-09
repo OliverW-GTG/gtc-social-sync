@@ -99,7 +99,11 @@ async function runSync(opts={}){
   for(const p of all){
     const ex=existing[p.id];
     if(ex&&ex.reviewed){p.resort=ex.resort;p.country=ex.country;p.region=ex.region;p.reviewed=ex.reviewed;p.ai_checked=ex.ai_checked;}
-    else{const r=resolve(p.caption);p.resort=r.resort;p.country=r.country;p.region=r.region;p.reviewed=ex?ex.reviewed:false;p.ai_checked=ex?ex.ai_checked:false;}
+    else{const r=resolve(p.caption);
+      if(r.resort){p.resort=r.resort;p.country=r.country;p.region=r.region;}
+      else if(ex&&ex.resort){p.resort=ex.resort;p.country=ex.country;p.region=ex.region;}
+      else{p.resort=null;p.country=null;p.region=null;}
+      p.reviewed=ex?ex.reviewed:false;p.ai_checked=ex?ex.ai_checked:false;}
     p.last_synced=now.toISOString();
   }
   // Instagram from Windsor is date-only (no time of day), so match Facebook to its

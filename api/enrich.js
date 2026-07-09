@@ -34,6 +34,37 @@ async function classify(caption) {
   try { return JSON.parse(m[0]); } catch { return null; }
 }
 
+// Link Facebook posts to their same-day Instagram destination, working directly
+// over the stored data (not a live pull), so it always sees the pairs.
+async function linkFacebook() {
+  let ig = [], from = 0;
+  while (true) {
+    const { data, error } = await supabase.from('posts')
+      .select('posted_at,resort,country,region')
+      .eq('platform', 'Instagram').not('resort', 'is', null).range(from, from + 999);
+    if (error) throw error;
+    ig = ig.concat(data || []);
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
+  const dayDest = {};
+  for (const p of ig) { const d = p.posted_at.slice(0, 10); (dayDest[d] = dayDest[d] || new Set()).add(JSON.stringify([p.resort, p.country, p.region])); }
+  let updated = 0;
+  for (const [day, set] of Object.entries(dayDest)) {
+    if (set.size !== 1) continue; // only days that clearly point to one place
+    const [resort, country, region] = JSON.parse([...set][0]);
+    const next = new Date(day + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1);
+    const { data, error } = await supabase.from('posts')
+      .update({ resort, country, region })
+      .eq('platform', 'Facebook').is('resort', null)
+      .gte('posted_at', day + 'T00:00:00Z').lt('posted_at', next.toISOString())
+      .select('id');
+    if (error) throw error;
+    updated += data ? data.length : 0;
+  }
+  return updated;
+}
+
 export default async function handler(req, res) {
   if (!req.query.token || req.query.token !== process.env.SYNC_SECRET) {
     return res.status(401).json({ error: 'Unauthorised' });
@@ -69,7 +100,12 @@ export default async function handler(req, res) {
 
     const { count } = await supabase.from('posts').select('id', { count: 'exact', head: true })
       .eq('platform', 'Instagram').is('resort', null).eq('ai_checked', false).neq('caption', '');
-    return res.status(200).json({ ok: true, processed: (posts || []).length, tagged, remaining: count || 0, done: (count || 0) === 0 });
+
+    // Once every caption has been read, link Facebook across the whole history.
+    let linked = 0;
+    if ((count || 0) === 0) linked = await linkFacebook();
+
+    return res.status(200).json({ ok: true, processed: (posts || []).length, tagged, linked, remaining: count || 0, done: (count || 0) === 0 });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err.message || err) });
   }
