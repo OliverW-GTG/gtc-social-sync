@@ -53,9 +53,10 @@
 
   <div class="pwbar" style="flex-direction:column;align-items:stretch;gap:8px;">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-      <button class="save" id="scan">Scan and update everything</button>
-      <span class="sub" style="margin:0;">Reads new captions with AI, then rebuilds timestamps and matches Facebook to Instagram, month by month.</span>
+      <button class="save" id="scan">Quick update</button>
+      <button class="save" id="rebuild" style="background:#fff;color:var(--blue);border:1px solid var(--blue);">Rebuild full history</button>
     </div>
+    <span class="sub" style="margin:0;">Quick update: pulls recent posts, reads new captions, re-matches Facebook. Takes seconds. Rebuild full history: reprocesses all 14 months, only needed occasionally.</span>
     <div id="scan-progress" class="sub" style="margin:0;display:none;"></div>
   </div>
 
@@ -176,13 +177,41 @@ async function send(card, payload, okMsg){
 
 $('#reload').addEventListener('click',load);
 
+async function runEnrich(prog){
+  let totalTagged=0, linked=0, merged=0, safety=0;
+  while(safety++ < 60){
+    prog.textContent='Reading new captions and matching Facebook to Instagram by time...';
+    const res=await fetch('/api/enrich?token='+encodeURIComponent(pw())+'&limit=30');
+    const d=await res.json();
+    if(!res.ok) throw new Error(d.error||res.status);
+    totalTagged+=d.tagged||0;
+    if(typeof d.linked==='number') linked=d.linked;
+    if(typeof d.merged==='number') merged=d.merged;
+    if(d.done || d.processed===0) break;
+  }
+  return {totalTagged, linked, merged};
+}
+
 async function scan(){
   if(!pw()){ alert('Enter your sync password at the top first'); return; }
   const btn=$('#scan'), prog=$('#scan-progress');
   btn.disabled=true; btn.textContent='Working...'; prog.style.display='block';
-  let totalTagged=0, safety=0;
   try{
-    // 1. Refresh each month first, so Instagram's real posting times come in.
+    prog.textContent='Pulling recent posts...';
+    await fetch('/api/sync?mode=recent&token='+encodeURIComponent(pw()));
+    const r=await runEnrich(prog);
+    await load();
+    prog.textContent='Done. '+r.totalTagged+' newly tagged, '+r.linked+' Facebook posts matched, '+r.merged+' duplicate names tidied. Anything unsure is listed below.';
+  }catch(err){ prog.textContent='Stopped: '+err.message; }
+  btn.disabled=false; btn.textContent='Quick update';
+}
+
+async function rebuild(){
+  if(!pw()){ alert('Enter your sync password at the top first'); return; }
+  if(!confirm('Reprocess all 14 months? This takes a few minutes. Only needed occasionally.')) return;
+  const btn=$('#rebuild'), prog=$('#scan-progress');
+  btn.disabled=true; btn.textContent='Working...'; prog.style.display='block';
+  try{
     const now=new Date(), months=[];
     for(let i=13;i>=0;i--){
       const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
@@ -194,25 +223,14 @@ async function scan(){
       prog.textContent='Refreshing '+m.label+'...';
       await fetch('/api/sync?from='+m.from+'&to='+m.to+'&token='+encodeURIComponent(pw()));
     }
-    // 2. Read any new captions, then (on the final call) link Facebook by exact time.
-    let linked=0;
-    while(safety++ < 60){
-      prog.textContent='Reading captions and matching Facebook to Instagram by time...';
-      const res=await fetch('/api/enrich?token='+encodeURIComponent(pw())+'&limit=30');
-      const d=await res.json();
-      if(!res.ok) throw new Error(d.error||res.status);
-      totalTagged+=d.tagged||0; if(typeof d.linked==='number') linked=d.linked;
-      if(d.done || d.processed===0) break;
-    }
-    prog.textContent='Refreshing what is left to check...';
+    const r=await runEnrich(prog);
     await load();
-    prog.textContent='Finished. '+totalTagged+' new posts tagged by AI, and '+linked+' Facebook posts matched to Instagram by exact time. Anything still unsure is listed below.';
-  }catch(err){
-    prog.textContent='Stopped: '+err.message;
-  }
-  btn.disabled=false; btn.textContent='Scan and update everything';
+    prog.textContent='Full rebuild done. '+r.totalTagged+' tagged by AI, '+r.linked+' Facebook posts matched, '+r.merged+' duplicate names tidied.';
+  }catch(err){ prog.textContent='Stopped: '+err.message; }
+  btn.disabled=false; btn.textContent='Rebuild full history';
 }
 $('#scan').addEventListener('click',scan);
+$('#rebuild').addEventListener('click',rebuild);
 
 load();
 </script>

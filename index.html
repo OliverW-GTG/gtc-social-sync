@@ -254,8 +254,8 @@ function renderScorecard(){
   const byDest=new Map();
   posts.forEach(p=>{
     if(!p.region||!p.dest)return; // only tagged destinations appear here
-    if(!byDest.has(p.dest))byDest.set(p.dest,{dest:p.dest,country:p.country,region:p.region,posts:0,reach:0,impressions:0,engagement:0,ig:0,fb:0,url:p.url});
-    const o=byDest.get(p.dest);o.posts++;o.reach+=p.reach;o.impressions+=p.impressions;o.engagement+=p.engagement;if(p.platform==="Instagram")o.ig++;else o.fb++;if(!o.url&&p.url)o.url=p.url;});
+    if(!byDest.has(p.dest))byDest.set(p.dest,{dest:p.dest,country:p.country,region:p.region,posts:0,reach:0,impressions:0,engagement:0,ig:0,fb:0,igUrl:null,fbUrl:null});
+    const o=byDest.get(p.dest);o.posts++;o.reach+=p.reach;o.impressions+=p.impressions;o.engagement+=p.engagement;if(p.platform==="Instagram"){o.ig++;if(!o.igUrl&&p.url)o.igUrl=p.url;}else{o.fb++;if(!o.fbUrl&&p.url)o.fbUrl=p.url;}});
   const body=document.getElementById('score-body');body.innerHTML='';
   const show=state.region==="all"?REGION_ORDER:[state.region];let any=false;
   show.forEach(r=>{
@@ -268,7 +268,8 @@ function renderScorecard(){
     rows.forEach(d=>{
       const er=d.reach?d.engagement/d.reach:0;
       const chips=(d.ig?`<span class="plat-chip p-ig">IG ${d.ig}</span>`:'')+(d.fb?`<span class="plat-chip p-fb">FB ${d.fb}</span>`:'');
-      const link=d.url?`<a href="${d.url}" target="_blank" rel="noopener">${d.dest}</a>`:`<span style="font-family:Poppins;font-weight:700;font-size:13px;">${d.dest}</span>`;
+      const durl=d.igUrl||d.fbUrl;
+      const link=durl?`<a href="${durl}" target="_blank" rel="noopener">${d.dest}</a>`:`<span style="font-family:Poppins;font-weight:700;font-size:13px;">${d.dest}</span>`;
       const tr=document.createElement('tr');
       tr.innerHTML=`<td class="dest-name">${link}${chips}<span class="country">${d.country||''}</span></td>
         <td></td><td><span class="posts-pill">${d.posts}</span></td>
