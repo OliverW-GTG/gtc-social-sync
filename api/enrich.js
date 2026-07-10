@@ -62,16 +62,25 @@ async function linkFacebook() {
     .map(p => ({ t: new Date(p.posted_at).getTime(), dest: [p.resort, p.country, p.region] }));
   const fb = await fetchAllPosts('Facebook', true);
 
-  const WINDOW = 90 * 1000; // 90 seconds
-  const assign = {};
-  for (const f of fb) {
-    const t = new Date(f.posted_at).getTime();
-    const near = ig.filter(x => Math.abs(x.t - t) <= WINDOW);
-    if (!near.length) continue;
-    const distinct = new Set(near.map(x => JSON.stringify(x.dest)));
-    if (distinct.size !== 1) continue; // conflicting destinations close in time: don't guess
-    const dest = JSON.parse([...distinct][0]);
-    const k = JSON.stringify(dest); (assign[k] = assign[k] || { dest, ids: [] }).ids.push(f.id);
+  const WINDOW = 60 * 1000; // 60 seconds; true cross-posts are within ~20s
+  // Build every candidate pair within the window, then match closest-first,
+  // one Facebook post to one Instagram post. A stray post can't steal a
+  // destination that already belongs to a nearer twin.
+  const pairs = [];
+  for (let fi = 0; fi < fb.length; fi++) {
+    const t = new Date(fb[fi].posted_at).getTime();
+    for (let gi = 0; gi < ig.length; gi++) {
+      const d = Math.abs(ig[gi].t - t);
+      if (d <= WINDOW) pairs.push([d, fi, gi]);
+    }
+  }
+  pairs.sort((a, b) => a[0] - b[0]);
+  const usedF = new Set(), usedG = new Set(), assign = {};
+  for (const [, fi, gi] of pairs) {
+    if (usedF.has(fi) || usedG.has(gi)) continue;
+    usedF.add(fi); usedG.add(gi);
+    const dest = ig[gi].dest, k = JSON.stringify(dest);
+    (assign[k] = assign[k] || { dest, ids: [] }).ids.push(fb[fi].id);
   }
 
   let updated = 0;
