@@ -9,7 +9,7 @@ const CONFIG = {
   Instagram: {
     connector: 'instagram', accountId: '17841404427634298', accountField: 'account_id',
     engagementField: 'media_engagement',
-    timeFields: ['media_timestamp','timestamp','created_time','media_created_time','media_publish_time'],
+    timeFields: ['media_created','media_timestamp','timestamp','created_time','media_created_time','media_publish_time'],
     captionFields: ['media_caption'],
     fields: { id:'media_id', date:'date', permalink:'media_url',
       reach:'media_reach', impressions:'media_impressions', likes:'media_like_count',
@@ -109,11 +109,8 @@ async function runSync(opts={}){
       p.reviewed=ex?ex.reviewed:false;p.ai_checked=ex?ex.ai_checked:false;}
     p.last_synced=now.toISOString();
   }
-  // Instagram from Windsor is date-only (no time of day), so match Facebook to its
-  // same-day Instagram destination, but only when that day points to a single place.
-  const igByDay={};
-  for(const p of all)if(p.platform==='Instagram'&&p.resort){const d=p.posted_at.slice(0,10);(igByDay[d]=igByDay[d]||new Set()).add(JSON.stringify([p.resort,p.country,p.region]));}
-  for(const p of all)if(p.platform==='Facebook'&&!p.resort&&!p.reviewed){const s=igByDay[p.posted_at.slice(0,10)];if(s&&s.size===1){const[resort,country,region]=JSON.parse([...s][0]);p.resort=resort;p.country=country;p.region=region;}}
+  // Facebook is matched to Instagram by exact posting time in the linking pass
+  // (api/enrich), which is the single source of truth, so sync does not guess here.
 
   let upserted=0;
   for(let i=0;i<all.length;i+=500){
