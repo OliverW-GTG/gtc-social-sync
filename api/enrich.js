@@ -35,33 +35,43 @@ async function classify(caption) {
 }
 
 // Link Facebook posts to Instagram by exact posting time. Cross-posts publish
-// within seconds of each other, so this is precise even on multi-destination days.
+// within ~20 seconds, so the window is tight and it refuses to guess when two
+// different destinations sit close together.
+async function fetchAllPosts(platform, onlyUntagged) {
+  let out = [], from = 0;
+  while (true) {
+    let q = supabase.from('posts').select('id,posted_at,resort,country,region').eq('platform', platform);
+    if (onlyUntagged) q = q.is('resort', null);
+    const { data, error } = await q.range(from, from + 999);
+    if (error) throw error;
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
+  return out;
+}
+
 async function linkFacebook() {
-  const fetchAll = async (platform, onlyUntagged) => {
-    let out = [], from = 0;
-    while (true) {
-      let q = supabase.from('posts').select('id,posted_at,resort,country,region').eq('platform', platform);
-      if (onlyUntagged) q = q.is('resort', null);
-      const { data, error } = await q.range(from, from + 999);
-      if (error) throw error;
-      out = out.concat(data || []);
-      if (!data || data.length < 1000) break;
-      from += 1000;
-    }
-    return out;
-  };
-  const ig = (await fetchAll('Instagram', false))
+  // Clear earlier automatic links (but keep anything you fixed by hand) so the
+  // tighter rules take effect on a re-run.
+  await supabase.from('posts').update({ resort: null, country: null, region: null })
+    .eq('platform', 'Facebook').eq('reviewed', false).not('resort', 'is', null);
+
+  const ig = (await fetchAllPosts('Instagram', false))
     .filter(p => p.resort && !p.posted_at.endsWith('T00:00:00.000Z'))
     .map(p => ({ t: new Date(p.posted_at).getTime(), dest: [p.resort, p.country, p.region] }));
-  const fb = await fetchAll('Facebook', true);
+  const fb = await fetchAllPosts('Facebook', true);
 
-  const WINDOW = 3 * 60 * 1000; // 3 minutes
+  const WINDOW = 90 * 1000; // 90 seconds
   const assign = {};
   for (const f of fb) {
     const t = new Date(f.posted_at).getTime();
-    let best = null, bestDiff = Infinity;
-    for (const x of ig) { const d = Math.abs(x.t - t); if (d <= WINDOW && d < bestDiff) { bestDiff = d; best = x; } }
-    if (best) { const k = JSON.stringify(best.dest); (assign[k] = assign[k] || { dest: best.dest, ids: [] }).ids.push(f.id); }
+    const near = ig.filter(x => Math.abs(x.t - t) <= WINDOW);
+    if (!near.length) continue;
+    const distinct = new Set(near.map(x => JSON.stringify(x.dest)));
+    if (distinct.size !== 1) continue; // conflicting destinations close in time: don't guess
+    const dest = JSON.parse([...distinct][0]);
+    const k = JSON.stringify(dest); (assign[k] = assign[k] || { dest, ids: [] }).ids.push(f.id);
   }
 
   let updated = 0;
@@ -76,6 +86,38 @@ async function linkFacebook() {
     }
   }
   return updated;
+}
+
+// Collapse names that are clearly the same place (e.g. "Druids Glen" and
+// "Druids Glen Golf Resort"), keeping the shortest as the display name.
+const SUFFIXES = ['golf and country club', 'golf & country club', 'country club', 'golf resort', 'golf club', 'golf links', 'golf course', 'resort and spa', 'resort & spa', 'resort', 'links', 'gc'];
+function canonical(name) {
+  let c = String(name).toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const s of SUFFIXES) if (c.endsWith(' ' + s)) { c = c.slice(0, c.length - s.length).trim(); break; }
+  return c;
+}
+async function mergeDuplicates() {
+  const rows = await fetchAllPosts('Instagram', false).then(a => a.concat());
+  const all = rows.concat(await fetchAllPosts('Facebook', false));
+  const groups = {};
+  for (const r of all) {
+    if (!r.resort) continue;
+    const key = (r.country || '') + '|' + canonical(r.resort);
+    (groups[key] = groups[key] || new Set()).add(r.resort);
+  }
+  let merged = 0;
+  for (const k of Object.keys(groups)) {
+    const names = [...groups[k]];
+    if (names.length < 2) continue;
+    const display = names.slice().sort((a, b) => a.length - b.length)[0];
+    for (const nm of names) {
+      if (nm === display) continue;
+      const { data, error } = await supabase.from('posts').update({ resort: display }).eq('resort', nm).select('id');
+      if (error) throw error;
+      merged += data ? data.length : 0;
+    }
+  }
+  return merged;
 }
 
 export default async function handler(req, res) {
@@ -114,11 +156,11 @@ export default async function handler(req, res) {
     const { count } = await supabase.from('posts').select('id', { count: 'exact', head: true })
       .eq('platform', 'Instagram').is('resort', null).eq('ai_checked', false).neq('caption', '');
 
-    // Once every caption has been read, link Facebook across the whole history.
-    let linked = 0;
-    if ((count || 0) === 0) linked = await linkFacebook();
+    // Once every caption has been read, link Facebook and tidy duplicate names.
+    let linked = 0, merged = 0;
+    if ((count || 0) === 0) { linked = await linkFacebook(); merged = await mergeDuplicates(); }
 
-    return res.status(200).json({ ok: true, processed: (posts || []).length, tagged, linked, remaining: count || 0, done: (count || 0) === 0 });
+    return res.status(200).json({ ok: true, processed: (posts || []).length, tagged, linked, merged, remaining: count || 0, done: (count || 0) === 0 });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err.message || err) });
   }
