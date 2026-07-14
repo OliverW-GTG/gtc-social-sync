@@ -1,13 +1,21 @@
-// Read-only accuracy check for the Facebook order-matching.
-// Uses the Facebook posts that DO have captions as an answer key: it works out
-// their true destination from the caption, runs the order-matching in memory,
-// and reports how often the two agree. Changes nothing in the database.
+// Read-only accuracy check for the Facebook <-> Instagram matching.
+//
+// IMPORTANT: this version tests the SAME method the live system uses
+// (api/enrich): match each Facebook post to the Instagram post published
+// within 40 seconds of it, closest-first, one Facebook post to one Instagram
+// post. It then uses the few Facebook posts that DO have their own caption as
+// an answer key -- it reads that caption with Claude to work out the true
+// destination, and checks whether the time-match agrees.
+//
+// It changes NOTHING in the database. Just open:
 //   /api/check?token=YOUR_SECRET
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
 const REGIONS = ['UK&I', 'Europe', 'International'];
+const WINDOW = 40 * 1000; // 40 seconds -- identical to the live matcher
 
+// Read one Facebook caption and work out its true destination (the answer key).
 async function classify(caption) {
   const system = 'You identify which golf-travel destination a Golf Travel Centre social media caption is about. Respond with minified JSON only.';
   const user = 'Caption:\n"""' + caption + '"""\n\nReturn {"resort":string|null,"country":string|null,"region":"UK&I"|"Europe"|"International"|null,"confidence":"high"|"medium"|"low"}. UK&I = UK and Ireland; Europe = mainland Europe; International = rest of world. Nulls with "low" if no clear destination.';
@@ -23,10 +31,10 @@ async function classify(caption) {
   try { return m ? JSON.parse(m[0]) : null; } catch { return null; }
 }
 
-async function fetchAll(platform, extraCols) {
+async function fetchAll(platform, cols) {
   let out = [], from = 0;
   while (true) {
-    const { data, error } = await supabase.from('posts').select('id,posted_at,resort,country,region' + (extraCols || '')).eq('platform', platform).range(from, from + 999);
+    const { data, error } = await supabase.from('posts').select(cols).eq('platform', platform).range(from, from + 999);
     if (error) throw error;
     out = out.concat(data || []);
     if (!data || data.length < 1000) break;
@@ -35,22 +43,31 @@ async function fetchAll(platform, extraCols) {
   return out;
 }
 
-// Build the order-match proposal: fbId -> [resort,country,region]
-function buildProposals(ig, fb) {
-  const day = (p) => p.posted_at.slice(0, 10);
-  const igByDay = {}, fbByDay = {};
-  for (const p of ig) (igByDay[day(p)] = igByDay[day(p)] || []).push(p);
-  for (const p of fb) (fbByDay[day(p)] = fbByDay[day(p)] || []).push(p);
-  const map = {};
-  for (const d of Object.keys(fbByDay)) {
-    const igList = (igByDay[d] || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
-    const fbList = fbByDay[d].slice().sort((a, b) => new Date(a.posted_at) - new Date(b.posted_at));
-    if (igList.length === fbList.length && igList.length > 0) {
-      for (let i = 0; i < fbList.length; i++) if (igList[i].resort) map[fbList[i].id] = [igList[i].resort, igList[i].country, igList[i].region];
-    } else {
-      const dests = new Set(igList.filter(x => x.resort).map(x => JSON.stringify([x.resort, x.country, x.region])));
-      if (dests.size === 1) { const dd = JSON.parse([...dests][0]); for (const f of fbList) map[f.id] = dd; }
+// Rebuild EXACTLY what the live matcher (api/enrich) would decide:
+// fbId -> [resort, country, region], for every Facebook post that finds a twin.
+function buildProposalsByTime(igRows, fbRows) {
+  // Same Instagram pool the live matcher uses: has a destination and a real
+  // timestamp (midnight = a date-only fallback, no usable time, so excluded).
+  const ig = igRows
+    .filter(p => p.resort && !p.posted_at.endsWith('T00:00:00.000Z'))
+    .map(p => ({ t: new Date(p.posted_at).getTime(), dest: [p.resort, p.country, p.region] }));
+
+  const fb = fbRows.map(p => ({ id: p.id, t: new Date(p.posted_at).getTime() }));
+
+  // Every candidate pair within the window, then assign closest-first, 1:1.
+  const pairs = [];
+  for (let fi = 0; fi < fb.length; fi++) {
+    for (let gi = 0; gi < ig.length; gi++) {
+      const d = Math.abs(ig[gi].t - fb[fi].t);
+      if (d <= WINDOW) pairs.push([d, fi, gi]);
     }
+  }
+  pairs.sort((a, b) => a[0] - b[0]);
+  const usedF = new Set(), usedG = new Set(), map = {};
+  for (const [, fi, gi] of pairs) {
+    if (usedF.has(fi) || usedG.has(gi)) continue;
+    usedF.add(fi); usedG.add(gi);
+    map[fb[fi].id] = ig[gi].dest;
   }
   return map;
 }
@@ -60,36 +77,58 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorised' });
   }
   try {
-    const ig = await fetchAll('Instagram');
-    const fb = await fetchAll('Facebook', ',caption');
-    const proposals = buildProposals(ig, fb.map(p => ({ id: p.id, posted_at: p.posted_at })));
+    const igRows = await fetchAll('Instagram', 'id,posted_at,resort,country,region');
+    const fbRows = await fetchAll('Facebook', 'id,posted_at,resort,country,region,caption,reviewed');
 
-    const captioned = fb.filter(p => p.caption && p.caption.trim() !== '').slice(0, 40);
-    let tested = 0, agreed = 0, disagreed = 0, noProposal = 0;
-    const examples = [];
+    // Match the live pool: only auto-matchable (not hand-corrected) Facebook posts.
+    const autoFb = fbRows.filter(p => !p.reviewed);
+    const proposals = buildProposalsByTime(igRows, autoFb);
+
+    // The answer key: Facebook posts that carry their own caption AND weren't
+    // hand-set (so we're testing the automatic matcher, not a human decision).
+    const captioned = fbRows.filter(p => p.caption && p.caption.trim() !== '' && !p.reviewed).slice(0, 50);
+
+    let tested = 0, regionAgreed = 0, countryAgreed = 0, noProposal = 0, noTruth = 0;
+    const disagreements = [], agreements = [];
+
     for (const p of captioned) {
       let truth = null;
       try { truth = await classify(p.caption); } catch (e) { continue; }
-      if (!truth || !REGIONS.includes(truth.region)) continue; // can't establish truth
-      const prop = proposals[p.id];
-      if (!prop) { noProposal++; continue; }
+      if (!truth || truth.confidence !== 'high' || !REGIONS.includes(truth.region)) { noTruth++; continue; }
+
+      const prop = proposals[p.id]; // [resort, country, region] or undefined
+      if (!prop) { noProposal++; continue; } // no twin within 40s -> correctly left blank
       tested++;
-      const agree = prop[2] === truth.region;
-      if (agree) agreed++; else disagreed++;
-      if (examples.length < 8) examples.push({
-        caption: p.caption.slice(0, 60),
-        true_region: truth.region,
-        order_match_region: prop[2],
-        agree
-      });
+
+      const regionOK = prop[2] === truth.region;
+      const countryOK = prop[1] && truth.country && prop[1].toLowerCase() === truth.country.toLowerCase();
+      if (regionOK) regionAgreed++;
+      if (countryOK) countryAgreed++;
+
+      const row = {
+        caption: p.caption.slice(0, 70),
+        matched_to: { resort: prop[0], country: prop[1], region: prop[2] },
+        caption_says: { resort: truth.resort, country: truth.country, region: truth.region },
+        region_ok: regionOK, country_ok: countryOK
+      };
+      if (regionOK && countryOK) { if (agreements.length < 5) agreements.push(row); }
+      else disagreements.push(row);
     }
+
     return res.status(200).json({
       ok: true,
-      facebook_with_captions: fb.filter(p => p.caption && p.caption.trim() !== '').length,
-      tested, agreed, disagreed,
-      captioned_without_a_proposal: noProposal,
-      accuracy_percent: tested ? Math.round((agreed / tested) * 100) : null,
-      examples
+      what_this_tested: 'The live 40-second closest-first Facebook-to-Instagram matching.',
+      facebook_posts_total: fbRows.length,
+      facebook_matched_to_an_instagram_post: Object.keys(proposals).length,
+      facebook_left_blank_no_twin: autoFb.length - Object.keys(proposals).length,
+      answer_key_size: captioned.length,
+      tested,
+      region_accuracy_percent: tested ? Math.round((regionAgreed / tested) * 100) : null,
+      country_accuracy_percent: tested ? Math.round((countryAgreed / tested) * 100) : null,
+      captioned_but_no_match_found: noProposal,
+      caption_too_vague_to_judge: noTruth,
+      disagreements,           // every mismatch, so we can see exactly what's wrong
+      agreements_sample: agreements
     });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err.message || err) });
