@@ -31,6 +31,21 @@ async function classify(caption) {
   try { return m ? JSON.parse(m[0]) : null; } catch { return null; }
 }
 
+// Read many captions at once (in small concurrent batches) so the whole check
+// finishes well inside Vercel's time limit instead of reading them one by one.
+async function classifyAll(posts, batchSize = 8) {
+  const out = [];
+  for (let i = 0; i < posts.length; i += batchSize) {
+    const batch = posts.slice(i, i + batchSize);
+    const done = await Promise.all(batch.map(async p => {
+      try { return { p, truth: await classify(p.caption) }; }
+      catch (e) { return { p, truth: null }; }
+    }));
+    out.push(...done);
+  }
+  return out;
+}
+
 async function fetchAll(platform, cols) {
   let out = [], from = 0;
   while (true) {
@@ -88,12 +103,13 @@ export default async function handler(req, res) {
     // hand-set (so we're testing the automatic matcher, not a human decision).
     const captioned = fbRows.filter(p => p.caption && p.caption.trim() !== '' && !p.reviewed).slice(0, 50);
 
+    // Read every caption in parallel batches (fast), then judge the results.
+    const read = await classifyAll(captioned);
+
     let tested = 0, regionAgreed = 0, countryAgreed = 0, noProposal = 0, noTruth = 0;
     const disagreements = [], agreements = [];
 
-    for (const p of captioned) {
-      let truth = null;
-      try { truth = await classify(p.caption); } catch (e) { continue; }
+    for (const { p, truth } of read) {
       if (!truth || truth.confidence !== 'high' || !REGIONS.includes(truth.region)) { noTruth++; continue; }
 
       const prop = proposals[p.id]; // [resort, country, region] or undefined
